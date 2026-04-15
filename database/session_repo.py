@@ -39,6 +39,9 @@ def create_session(subject: str, target_duration_mins: int, keywords: List[str])
 
 def save_distraction(session_id: int, app_name: str, duration_seconds: int):
     """Ghi một sự kiện xao nhãng vào bảng distractions."""
+    print(f"[DEBUG] ===== save_distraction =====")
+    print(f"[DEBUG] session_id={session_id}, app_name='{app_name}', duration={duration_seconds}s")
+
     db = get_db()
     try:
         d = Distraction(
@@ -49,6 +52,11 @@ def save_distraction(session_id: int, app_name: str, duration_seconds: int):
         )
         db.add(d)
         db.commit()
+        print(f"[DEBUG] Distraction saved successfully to DB")
+        print(f"[DEBUG] ===== END save_distraction =====")
+    except Exception as e:
+        print(f"[DEBUG] ERROR saving distraction: {e}")
+        raise
     finally:
         db.close()
 
@@ -79,9 +87,35 @@ def get_distraction_stats(session_id: int) -> dict:
     db = get_db()
     try:
         rows = db.query(Distraction).filter(Distraction.session_id == session_id).all()
-        details = [{"app": r.app_name, "seconds": r.duration_seconds} for r in rows]
+
+        # DEBUG: Log all distractions found in database
+        print(f"[DEBUG] ===== get_distraction_stats for session_id={session_id} =====")
+        print(f"[DEBUG] Total distractions found in DB: {len(rows)}")
+
+        details = []
+        for r in rows:
+            detail = {"app": r.app_name, "seconds": r.duration_seconds}
+            details.append(detail)
+            print(f"[DEBUG]   - App: '{r.app_name}', Duration: {r.duration_seconds}s, Timestamp: {r.timestamp}")
+
         total = sum(r.duration_seconds for r in rows)
-        return {"count": len(rows), "total_seconds": total, "details": details}
+        result = {"count": len(rows), "total_seconds": total, "details": details}
+
+        # VALIDATION: Check for data consistency
+        details_sum = sum(d['seconds'] for d in details)
+        print(f"[DEBUG] Summary: count={result['count']}, total_seconds={result['total_seconds']}")
+        print(f"[DEBUG] Details list length: {len(result['details'])}")
+        print(f"[DEBUG] Sum of detail seconds: {details_sum}")
+
+        # Data integrity checks
+        if result['count'] != len(result['details']):
+            print(f"[ERROR] DATA INTEGRITY: count={result['count']} != details length={len(result['details'])}!")
+        if result['total_seconds'] != details_sum:
+            print(f"[ERROR] DATA INTEGRITY: total_seconds={result['total_seconds']} != sum of details={details_sum}!")
+
+        print(f"[DEBUG] ===== END get_distraction_stats =====")
+
+        return result
     finally:
         db.close()
 

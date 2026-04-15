@@ -1,0 +1,9 @@
+.agents/
+.claude/
+docs/
+GEMINI.md
+README.md
+CLAUDE.md
+AGENTS.md
+guide/
+__pycache__/

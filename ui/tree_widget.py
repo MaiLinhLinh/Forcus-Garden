@@ -26,7 +26,7 @@ class TreeWidget(QWidget):
             | Qt.WindowType.Tool                    # Không hiện trên taskbar
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)  # Nền trong suốt
-        self.setFixedSize(160, 220)
+        self.setFixedSize(180, 250)
 
         # Vị trí góc phải dưới màn hình (sẽ được set từ ngoài nếu cần)
         self._drag_pos = QPoint()
@@ -39,7 +39,7 @@ class TreeWidget(QWidget):
     # ------------------------------------------------------------------
     def _build_ui(self):
         layout = QVBoxLayout()
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(6)
         self.setLayout(layout)
 
@@ -48,16 +48,16 @@ class TreeWidget(QWidget):
         ctrl_bar.setContentsMargins(0, 0, 0, 0)
 
         self.collapse_btn = QPushButton("—")
-        self.collapse_btn.setFixedSize(22, 22)
+        self.collapse_btn.setFixedSize(26, 26)
         self.collapse_btn.setToolTip("Thu gọn")
         self.collapse_btn.clicked.connect(self._toggle_collapse)
-        self.collapse_btn.setStyleSheet(self._btn_style("#888"))
+        self.collapse_btn.setStyleSheet(self._ctrl_btn_style("#94a3b8"))
 
         self.close_btn = QPushButton("✕")
-        self.close_btn.setFixedSize(22, 22)
+        self.close_btn.setFixedSize(26, 26)
         self.close_btn.setToolTip("Kết thúc phiên học")
         self.close_btn.clicked.connect(self._finish_session)
-        self.close_btn.setStyleSheet(self._btn_style("#e74c3c"))
+        self.close_btn.setStyleSheet(self._ctrl_btn_style("#ef4444"))
 
         ctrl_bar.addStretch()
         ctrl_bar.addWidget(self.collapse_btn)
@@ -67,30 +67,42 @@ class TreeWidget(QWidget):
         # --- Hình cây (emoji lớn, hoạt như ảnh đại diện cây) ---
         self.tree_label = QLabel("🌱")
         self.tree_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.tree_label.setFont(QFont("Segoe UI Emoji", 52))
+        self.tree_label.setFont(QFont("Segoe UI Emoji", 56))
+        self.tree_label.setStyleSheet("background: transparent; border: none;")
         layout.addWidget(self.tree_label)
 
         # --- Đồng hồ đếm ngược ---
         self.timer_label = QLabel(self._format_time(self.remaining_seconds))
         self.timer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.timer_label.setStyleSheet(
-            "color: #1b5e20; font-size: 26px; font-weight: bold; font-family: 'Consolas';"
-        )
+        self.timer_label.setStyleSheet("""
+            color: #4ade80;
+            font-size: 28px;
+            font-weight: bold;
+            font-family: 'Consolas', 'Courier New', monospace;
+            background: transparent;
+            border: none;
+        """)
         layout.addWidget(self.timer_label)
 
         # --- Tên môn học ---
         subject_label = QLabel(self.subject)
         subject_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subject_label.setWordWrap(True)
-        subject_label.setStyleSheet("color: #4a4a4a; font-size: 10px;")
+        subject_label.setStyleSheet("""
+            color: #94a3b8;
+            font-size: 11px;
+            font-style: italic;
+            background: transparent;
+            border: none;
+        """)
         layout.addWidget(subject_label)
 
-        # --- Background bo tròn (paintEvent đảm nhận, dùng style trên widget chính) ---
+        # --- Background bo tròn dark glassmorphism ---
         self.setStyleSheet("""
             TreeWidget {
-                background-color: rgba(240, 255, 240, 230);
-                border-radius: 16px;
-                border: 1px solid rgba(100, 180, 100, 160);
+                background-color: rgba(26, 31, 46, 235);
+                border-radius: 18px;
+                border: 1px solid rgba(74, 222, 128, 0.3);
             }
         """)
 
@@ -139,11 +151,11 @@ class TreeWidget(QWidget):
     def _toggle_collapse(self):
         self.is_collapsed = not self.is_collapsed
         if self.is_collapsed:
-            self.setFixedSize(160, 50)   # Chỉ giữ lại thanh điều khiển + đồng hồ
+            self.setFixedSize(180, 55)   # Chỉ giữ lại thanh điều khiển + đồng hồ
             self.tree_label.hide()
             self.collapse_btn.setText("□")
         else:
-            self.setFixedSize(160, 220)
+            self.setFixedSize(180, 250)
             self.tree_label.show()
             self.collapse_btn.setText("—")
 
@@ -173,15 +185,17 @@ class TreeWidget(QWidget):
         return f"{m:02d}:{s:02d}"
 
     @staticmethod
-    def _btn_style(color: str) -> str:
+    def _ctrl_btn_style(color: str) -> str:
         return f"""
             QPushButton {{
-                background-color: transparent;
+                background-color: rgba(255, 255, 255, 0.06);
                 color: {color};
                 border: none;
                 font-size: 13px;
                 font-weight: bold;
-                border-radius: 4px;
+                border-radius: 13px;
             }}
-            QPushButton:hover {{ background-color: rgba(0,0,0,30); }}
+            QPushButton:hover {{
+                background-color: rgba(255, 255, 255, 0.15);
+            }}
         """

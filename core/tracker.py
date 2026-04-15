@@ -1,6 +1,8 @@
 import time
 import pygetwindow as gw
 from PyQt6.QtCore import QThread, pyqtSignal
+from core.matcher import KeywordMatcher
+from core.browser_parser import BrowserTitleParser
 
 class FocusTrackerThread(QThread):
     """
@@ -17,6 +19,15 @@ class FocusTrackerThread(QThread):
     STATE_FOCUSING = "FOCUSING"
     STATE_DISTRACTED = "DISTRACTED"
 
+    # Whitelist: These window titles are always considered valid (not distractions)
+    # This prevents the app's own window from being detected as a distraction
+    WHITELIST_TITLES = [
+        "focus garden",
+        "dashboard",
+        "create session",
+        "session summary",
+    ]
+
     # Signal gửi trạng thái real-time: (Đang xao nhãng True/False, Tiêu đề app hiện tại)
     status_updated = pyqtSignal(bool, str)
 
@@ -26,9 +37,13 @@ class FocusTrackerThread(QThread):
 
     def __init__(self, allowed_keywords, parent=None):
         super().__init__(parent)
-        # Chuẩn hóa keywords: chữ thường, cắt khoảng trắng
-        self.allowed_keywords = [kw.strip().lower() for kw in allowed_keywords if kw.strip()]
-        self.buffer_seconds = 10  # Chỉ lưu distraction >= 10 giây
+        # Phase 1: Use KeywordMatcher instead of simple list
+        # OLD: self.allowed_keywords = [kw.strip().lower() for kw in allowed_keywords if kw.strip()]
+        # NEW: Fuzzy matching with RapidFuzz
+        self.matcher = KeywordMatcher(allowed_keywords, threshold=90)
+        # Phase 4: Add browser title parser
+        self.browser_parser = BrowserTitleParser()
+        self.buffer_seconds = 5  # Chỉ lưu distraction >= 5 giây (reduced from 10s)
 
         # State machine variables
         self.state = self.STATE_FOCUSING
@@ -43,10 +58,24 @@ class FocusTrackerThread(QThread):
                 active_window = gw.getActiveWindow()
                 if active_window and active_window.title:
                     current_app_name = active_window.title
-                    title = active_window.title.lower()
+                    title = active_window.title
 
-                    # So khớp tiêu đề cửa sổ với danh sách Study Zone
-                    is_valid = any(kw in title for kw in self.allowed_keywords)
+                    # Check whitelist first (app's own windows should never be distractions)
+                    title_lower = title.lower()
+                    is_whitelisted = any(whitelist_term in title_lower for whitelist_term in self.WHITELIST_TITLES)
+
+                    if is_whitelisted:
+                        is_valid = True  # Whitelisted windows are always valid
+                    else:
+                        # Phase 4: Parse browser titles for better matching
+                        parsed_site, is_browser = self.browser_parser.parse(title)
+                        if is_browser:
+                            # Use extracted site name for matching, or full title if extraction failed
+                            title_to_check = parsed_site if parsed_site else title
+                            is_valid = self.matcher.is_match(title_to_check)
+                        else:
+                            # Non-browser or couldn't parse - use full title
+                            is_valid = self.matcher.is_match(title)
 
                     # === TRANSITION: DISTRACTED -> FOCUSING ===
                     # Người dùng quay lại study zone
@@ -76,7 +105,21 @@ class FocusTrackerThread(QThread):
                     # === STAY IN DISTRACTED ===
                     # Đang xao nhãng tiếp tục
                     elif not is_valid and self.state == self.STATE_DISTRACTED:
-                        # Cập nhật status (UI hiển thị real-time)
+                        # Check if user switched to a different distraction app
+                        if current_app_name != self._distraction_app_name:
+                            # Save previous distraction if it was long enough
+                            duration = int(time.time() - self.distraction_start_time)
+                            if duration >= self.buffer_seconds and not self._is_saved:
+                                print(f"[DEBUG] App switch detected - Saving previous distraction: {self._distraction_app_name}, {duration}s")
+                                self.distraction_recorded.emit(self._distraction_app_name, duration)
+                                self._is_saved = True
+
+                            # Start tracking new distraction app
+                            self._distraction_app_name = current_app_name
+                            self.distraction_start_time = time.time()
+                            self._is_saved = False  # Reset flag for new distraction
+
+                        # Update status (UI hiển thị real-time)
                         self.status_updated.emit(True, current_app_name)
 
                     # === STAY IN FOCUSING ===
@@ -100,12 +143,25 @@ class FocusTrackerThread(QThread):
         Returns:
             tuple: (app_name, duration_seconds) hoặc (None, 0) nếu không có
         """
+        print(f"[DEBUG] ===== get_pending_distraction =====")
+        print(f"[DEBUG] Current state: {self.state}")
+        print(f"[DEBUG] distraction_start_time: {self.distraction_start_time}")
+        print(f"[DEBUG] _is_saved: {self._is_saved}")
+        print(f"[DEBUG] _distraction_app_name: {self._distraction_app_name}")
+
         if self.state == self.STATE_DISTRACTED and self.distraction_start_time and not self._is_saved:
             duration = int(time.time() - self.distraction_start_time)
+            print(f"[DEBUG] Calculated duration: {duration}s, buffer: {self.buffer_seconds}s")
+
             if duration >= self.buffer_seconds:
-                print(f"[DEBUG] Pending distraction: {self._distraction_app_name}, {duration}s")
+                print(f"[DEBUG] Pending distraction FOUND: {self._distraction_app_name}, {duration}s")
                 return (self._distraction_app_name, duration)
-        print(f"[DEBUG] No pending distraction to save")
+            else:
+                print(f"[DEBUG] Duration too short to save")
+        else:
+            print(f"[DEBUG] No pending distraction (state={self.state}, has_start_time={bool(self.distraction_start_time)}, is_saved={self._is_saved})")
+
+        print(f"[DEBUG] ===== END get_pending_distraction =====")
         return (None, 0)
 
     def stop(self):
