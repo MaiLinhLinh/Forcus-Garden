@@ -1,13 +1,15 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QLineEdit, QSpinBox, QPushButton, QTextEdit,
-                             QMessageBox, QApplication, QFrame)
+                             QMessageBox, QApplication, QFrame, QListWidget, QListWidgetItem)
 from PyQt6.QtGui import QScreen
 from PyQt6.QtCore import Qt
 import re
+import pygetwindow as gw
 
 from ui.tree_widget import TreeWidget
 from ui.summary_dialog import SummaryDialog
 from core.tracker import FocusTrackerThread
+from core.browser_parser import BrowserTitleParser
 from database.session_repo import (
     create_session, save_distraction, close_session, get_distraction_stats
 )
@@ -103,27 +105,42 @@ class CreateSessionWidget(QWidget):
         layout.addSpacing(4)
 
         # ── Study Zone ────────────────────────────────────────────────
-        label_zone = QLabel("🛡️  Study Zone")
+        zone_header_layout = QHBoxLayout()
+        label_zone = QLabel("🛡️  Study Zone (Chọn cửa sổ)")
         label_zone.setStyleSheet("font-size: 13px; font-weight: 600; color: #cbd5e1; background: transparent; border: none;")
-        layout.addWidget(label_zone)
+        
+        self.btn_refresh = QPushButton("🔄 Làm mới")
+        self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_refresh.setStyleSheet("""
+            QPushButton {
+                background-color: #323b54; color: #e2e8f0; border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: bold;
+            }
+            QPushButton:hover { background-color: #4ade80; color: #1a1f2e; }
+        """)
+        self.btn_refresh.clicked.connect(self._refresh_windows)
+        
+        zone_header_layout.addWidget(label_zone)
+        zone_header_layout.addStretch()
+        zone_header_layout.addWidget(self.btn_refresh)
+        layout.addLayout(zone_header_layout)
 
-        zone_hint = QLabel("Chỉ các app trong danh sách mới được phép · Mỗi từ khóa trên 1 dòng")
+        zone_hint = QLabel("Hệ thống sẽ theo dõi bạn dựa trên các cửa sổ được chọn")
         zone_hint.setStyleSheet("font-size: 11px; color: #64748b; background: transparent; border: none; margin-bottom: 2px;")
         layout.addWidget(zone_hint)
 
-        self.zone_input = QTextEdit()
-        self.zone_input.setPlaceholderText(
-            "💡 Tên app nên dùng: vscode, chrome, word, python\n"
-            "❌ Không nên dùng tên dự án cụ thể\n\n"
-            "Ví dụ:\n"
-            "vscode\n"
-            "chrome\n"
-            "github\n"
-            "python"
-        )
-        self.zone_input.setMinimumHeight(120)
-        self.zone_input.setMaximumHeight(160)
-        layout.addWidget(self.zone_input)
+        self.window_list = QListWidget()
+        self.window_list.setMinimumHeight(120)
+        self.window_list.setMaximumHeight(160)
+        self.window_list.setStyleSheet("""
+            QListWidget {
+                background-color: #2a3149; color: #e2e8f0; border: 1px solid rgba(74, 222, 128, 0.2); border-radius: 8px; padding: 5px;
+            }
+            QListWidget::item { padding: 4px; border-radius: 4px; outline: none; }
+            QListWidget::item:hover { background-color: #323b54; }
+        """)
+        layout.addWidget(self.window_list)
+        
+        self._refresh_windows() # Khởi tạo danh sách lần đầu
 
         layout.addSpacing(8)
 
@@ -159,45 +176,79 @@ class CreateSessionWidget(QWidget):
         outer.addWidget(card)
 
     # ------------------------------------------------------------------
+    # QUẢN LÝ CỬA SỔ
+    # ------------------------------------------------------------------
+    def _refresh_windows(self):
+        self.window_list.clear()
+        junk_titles = [
+            "Program Manager", "Settings", "Microsoft Text Input Application", 
+            "Windows Default Lock Screen", "Taskbar", "Focus Garden"
+        ]
+        
+        try:
+            windows = gw.getAllWindows()
+            added_titles = set()
+            
+            for w in windows:
+                title = w.title.strip()
+                if not title:
+                    continue
+                    
+                # Clean up annoying browser tab counts like "and 3 more pages" or "và 2 trang khác"
+                title = re.sub(r'\s+(?:and|và)\s+\d+\s+(?:more pages|other tabs|trang khác|tab khác).*', '', title, flags=re.IGNORECASE)
+                    
+                # Filter junk windows
+                if any(junk.lower() in title.lower() for junk in junk_titles):
+                    continue
+                    
+                if title in added_titles:
+                    continue
+                    
+                added_titles.add(title)
+                
+                item = QListWidgetItem(title)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(Qt.CheckState.Unchecked)
+                self.window_list.addItem(item)
+        except Exception as e:
+            print(f"[ERROR] Cannot fetch windows: {e}")
+
+    # ------------------------------------------------------------------
     # LOGIC BẮT ĐẦU PHIÊN
     # ------------------------------------------------------------------
     def _on_start(self):
         subject = self.subject_input.text().strip()
         duration = self.duration_input.value()
-        keywords_raw = self.zone_input.toPlainText().strip()
 
         if not subject:
             QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng nhập tên môn học / hoạt động.")
             return
-        if not keywords_raw:
-            QMessageBox.warning(self, "Thiếu Study Zone",
-                                "Vui lòng khai báo ít nhất 1 từ khóa cho Study Zone.")
+            
+        selected_titles = []
+        for i in range(self.window_list.count()):
+            item = self.window_list.item(i)
+            if item.checkState() == Qt.CheckState.Checked:
+                selected_titles.append(item.text())
+
+        if not selected_titles:
+            QMessageBox.warning(self, "Thiếu Study Zone", "Vui lòng chọn ít nhất 1 cửa sổ cho Study Zone.")
             return
 
-        keywords = [kw.strip() for kw in keywords_raw.splitlines() if kw.strip()]
-
-        # Validate keywords for common mistakes
-        suspicious_keywords = []
-        for kw in keywords:
-            # Check for overly specific patterns
-            if len(kw) > 15:  # Very long keywords are likely project names
-                suspicious_keywords.append(f"'{kw}' (quá dài)")
-            elif re.match(r'^[A-Z][a-z]+$', kw) and len(kw) > 5:  # Proper nouns
-                suspicious_keywords.append(f"'{kw}' (tên riêng)")
-
-        if suspicious_keywords:
-            msg = "Cảnh báo: Các từ khóa sau có thể quá cụ thể:\n\n"
-            msg += "\n".join(f"  • {kw}" for kw in suspicious_keywords)
-            msg += "\n\n💡 Nên dùng tên app chung như: vscode, chrome, word, python"
-            msg += "\n\nBạn có muốn tiếp tục không?"
-            reply = QMessageBox.question(
-                self, "Cảnh báo Study Zone",
-                msg,
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No
-            )
-            if reply == QMessageBox.StandardButton.No:
-                return
+        # Trích xuất từ khóa cốt lõi từ tên cửa sổ
+        parser = BrowserTitleParser()
+        keywords = []
+        for title in selected_titles:
+            parsed_site, is_browser = parser.parse(title)
+            if is_browser and parsed_site:
+                keywords.append(parsed_site)
+            else:
+                parts = title.split('-')
+                if len(parts) > 1:
+                    app_name = parts[-1].strip()
+                    keywords.append(app_name)
+                keywords.append(title)
+                
+        keywords = list(set(keywords))
 
         # --- Lưu Session vào DB ---
         self._session_id = create_session(subject, duration, keywords)
